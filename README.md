@@ -180,7 +180,7 @@ This project is open-source and available under the **MIT License**. Feel free t
 
 Have questions or want to connect? Reach out via:
 - GitHub Issues: [Create an issue](https://github.com/yourusername/surfboard-3d/issues)
-- Email: your.email@example.com
+- Email: jordanleturgez@gmail.com
 
 ---
 
