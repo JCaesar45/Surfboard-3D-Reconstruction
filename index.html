@@ -1,0 +1,407 @@
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Surfboard 3D Reconstruction</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background-color: #111;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import {
+      OrbitControls
+    } from 'three/addons/controls/OrbitControls.js';
+    // --- scene setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a2b3c); // subtle ocean-inspired background
+    const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(3.2, 1.8, 3.8);
+    camera.lookAt(0, 0, 0);
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true
+    });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.2;
+    document.body.appendChild(renderer.domElement);
+    // --- controls ---
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.autoRotate = false;
+    controls.enableZoom = true;
+    controls.target.set(0, 0.05, 0);
+    controls.update();
+    // --- lights ---
+    const ambientLight = new THREE.AmbientLight(0x404060, 0.6);
+    scene.add(ambientLight);
+    const keyLight = new THREE.DirectionalLight(0xffeedd, 2.5);
+    keyLight.position.set(4, 5, 3);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.width = 1024;
+    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.bias = -0.0005;
+    scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0xccddff, 1.2);
+    fillLight.position.set(-3, 1, 4);
+    scene.add(fillLight);
+    const rimLight = new THREE.DirectionalLight(0xffffdd, 0.8);
+    rimLight.position.set(-2, 0.5, -4);
+    scene.add(rimLight);
+    const backLight = new THREE.DirectionalLight(0x88aaff, 0.6);
+    backLight.position.set(0, 0.5, -5);
+    scene.add(backLight);
+    // subtle ground grid (for orientation)
+    const gridHelper = new THREE.GridHelper(6, 12, 0x88aadd, 0x446688);
+    gridHelper.position.y = -0.2;
+    scene.add(gridHelper);
+    // --- SURFBOARD CONSTRUCTION ---
+    const surfboardGroup = new THREE.Group();
+    // ----- main board (foam core) -----
+    // shape: elongated with rounded nose and slightly squared tail
+    // using a custom shape via extrusion or lathe? we'll use a stretched sphere + box + rounded ends
+    // approach: use a cylinder with rounded ends via lathe? simpler: combine a box with two half spheres.
+    // but for a surfboard, we'll use a flattened cylinder with a custom lathe profile for smooth shape.
+    // LatheGeometry with points to create a classic surfboard profile (symmetrical)
+    const points = [];
+    const segments = 20;
+    // profile: nose (x=0) to tail (x=1), y= half thickness
+    // scale later to desired size
+    const profile = [
+      [0.0, 0.0], // nose tip
+      [0.02, 0.12],
+      [0.05, 0.20],
+      [0.10, 0.28],
+      [0.15, 0.32],
+      [0.20, 0.34],
+      [0.25, 0.36],
+      [0.30, 0.37],
+      [0.35, 0.38],
+      [0.40, 0.385],
+      [0.45, 0.39],
+      [0.50, 0.392],
+      [0.55, 0.39],
+      [0.60, 0.385],
+      [0.65, 0.38],
+      [0.70, 0.37],
+      [0.75, 0.36],
+      [0.80, 0.34],
+      [0.85, 0.30],
+      [0.90, 0.24],
+      [0.94, 0.18],
+      [0.97, 0.10],
+      [0.99, 0.04],
+      [1.0, 0.0] // tail tip (slightly squared)
+    ];
+    // we need to rotate the profile so that the surfboard lies along Z axis? Three.js Lathe rotates around Y.
+    // We'll build along Y, then rotate the group. But easier: build along X (longitudinal) using Lathe? Lathe only works around Y.
+    // So we create a shape along Y, then rotate the mesh 90° around Z so it lies along X.
+    // We'll create a half profile (positive Y) and lathe it around Y to get a 3D shape.
+    // For a surfboard, we want a flat bottom and slightly domed top? Actually typical surfboard has slightly domed deck and flat bottom.
+    // We'll approximate with a symmetrical lens shape (top and bottom both convex) but with different radii? 
+    // For simplicity, we'll use a symmetrical profile (both top and bottom similar) which is acceptable.
+    // However, to give it a more realistic feel, we make the bottom slightly flatter.
+    // We'll construct using a custom geometry: we can use Shape + Extrude? Or we can use a cylinder with scale?
+    // The cleanest: use a "Box" with rounded edges via a SphereGeometry merged? 
+    // I'll use a LatheGeometry with a profile that represents the cross-section (half thickness) and then scale.
+    // But Lathe creates a surface of revolution; for a surfboard, we need to stretch it.
+    // We can create a lathe of the half profile, then scale along one axis to elongate.
+    // So we define a half-profile (radius as function of height) that gives a rounded nose and tail.
+    // We'll build a shape that is symmetrical along Y (longitudinal) and Z (width) but with a flat bottom.
+    // Actually we can use a Shape and ExtrudeGeometry with bevel? but that's complex.
+    // Better: use a custom BufferGeometry with vertices. But for simplicity and performance, I'll combine:
+    // - A main central "plank" (BoxGeometry) with rounded ends using SphereGeometry.
+    // This is a common technique and looks good.
+    // Let's do a combination: a stretched sphere + a box.
+    // We'll make the board 2 units long, 0.6 wide, 0.12 thick.
+    const boardLength = 2.2;
+    const boardWidth = 0.62;
+    const boardThick = 0.12;
+    const noseRadius = 0.3;
+    const tailRadius = 0.22;
+    // ---- Main body: BoxGeometry with rounded edges? but we want a smooth shape.
+    // Instead we use a "Cylinder" with a custom shape? Actually we can use a "Lathe" to create a surfboard profile.
+    // We'll create a profile that is the cross-section along the length, then use LatheGeometry? No, Lathe rotates around Y.
+    // We'll create a profile as a set of points (r, y) where r is half-width and y is along the length.
+    // Then we use LatheGeometry to create a surface of revolution, but that would be round, not flattened.
+    // We need to flatten it. So we scale along Z after creation.
+    // Let's use a LatheGeometry with the half-profile (r, y) and then scale Z by 0.3 to flatten it.
+    // This yields a nice surfboard shape.
+    const halfProfile = [];
+    // nose to tail: y from -boardLength/2 to boardLength/2, r = half width at that point.
+    const len = boardLength / 2;
+    const w = boardWidth / 2;
+    // define shape: nose (left) rounded, tail (right) slightly squared.
+    // we sample points along y
+    const steps = 30;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const y = -len + t * boardLength;
+      // r based on position along length
+      let r = 0;
+      const absY = Math.abs(y);
+      const maxY = len;
+      // nose region (left side)
+      if (y < 0) {
+        const p = (y + len) / len; // 0 at nose, 1 at center
+        // nose curve: starts at 0, goes to w with a smooth curve
+        if (p < 0.15) {
+          // nose tip: rapid increase
+          const q = p / 0.15;
+          r = w * (1 - Math.pow(1 - q, 2));
+        } else {
+          // main body
+          const q = (p - 0.15) / 0.85;
+          r = w * (0.92 + 0.08 * Math.sin(q * Math.PI * 0.5));
+        }
+      } else {
+        // tail (right side)
+        const p = y / len; // 0 at center, 1 at tail
+        if (p < 0.7) {
+          // main body
+          r = w * (1 - 0.08 * Math.sin(p * Math.PI * 0.3));
+        } else {
+          // tail curve
+          const q = (p - 0.7) / 0.3;
+          r = w * (0.85 - 0.35 * q * q);
+        }
+      }
+      // ensure r is not negative
+      r = Math.max(r, 0.02);
+      halfProfile.push(new THREE.Vector2(r, y));
+    }
+    // we need to add a slight thickness variation: the board is thicker in the center.
+    // We'll create a second lathe for thickness? Actually we can use the same profile and scale Z, but we want a domed deck.
+    // Let's create a shape by combining two lathe geometries: one for the top (slightly domed) and one for the bottom (flat).
+    // But for a simpler approach, we can use a single lathe and then apply a displacement? 
+    // Instead, I'll create a "core" using a box with rounded ends, then add a deck layer.
+    // Given the time, I'll use a combination of a BoxGeometry and SphereGeometry to approximate.
+    // Let's build a clean surfboard using a "Box" with rounded ends via a custom geometry.
+    // I'll use a "Cylinder" with a custom shape? No, let's just use a Lathe for the main board and scale Z to flatten.
+    // This actually works very well and gives a smooth shape.
+    const lathePoints = halfProfile.map(p => new THREE.Vector2(p.x, p.y));
+    const latheGeom = new THREE.LatheGeometry(lathePoints, 24);
+    // Now we have a 3D shape that is a surface of revolution. We need to flatten it along Z.
+    // We can scale the geometry.
+    const scaleZ = 0.3; // flatten to make it a surfboard
+    const positions = latheGeom.attributes.position;
+    for (let i = 0; i < positions.count; i++) {
+      const x = positions.getX(i);
+      const y = positions.getY(i);
+      const z = positions.getZ(i);
+      positions.setXYZ(i, x, y, z * scaleZ);
+    }
+    positions.needsUpdate = true;
+    latheGeom.computeVertexNormals();
+    // color: soft foam white/cream with a slight tint
+    const boardMat = new THREE.MeshStandardMaterial({
+      color: 0xf0eee0,
+      roughness: 0.5,
+      metalness: 0.05,
+      envMapIntensity: 0.2,
+    });
+    const boardMesh = new THREE.Mesh(latheGeom, boardMat);
+    boardMesh.castShadow = true;
+    boardMesh.receiveShadow = true;
+    // rotate so that the board lies along X (since we built along Y)
+    boardMesh.rotation.z = -Math.PI / 2;
+    surfboardGroup.add(boardMesh);
+    // ---- add deck pad / traction (a subtle darker patch) ----
+    // We'll add a thin pad near the tail area
+    const padShape = new THREE.Shape();
+    const padW = 0.38;
+    const padL = 0.5;
+    const padX = 0.5; // offset from center
+    padShape.moveTo(-padW / 2, -padL / 2);
+    padShape.quadraticCurveTo(-padW / 2, padL / 2, 0, padL / 2);
+    padShape.quadraticCurveTo(padW / 2, padL / 2, padW / 2, -padL / 2);
+    padShape.quadraticCurveTo(padW / 2, -padL / 2, 0, -padL / 2);
+    padShape.quadraticCurveTo(-padW / 2, -padL / 2, -padW / 2, -padL / 2);
+    const padGeom = new THREE.ShapeGeometry(padShape);
+    const padMat = new THREE.MeshStandardMaterial({
+      color: 0x222222,
+      roughness: 0.9,
+      metalness: 0.0,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.3,
+    });
+    const padMesh = new THREE.Mesh(padGeom, padMat);
+    padMesh.position.set(0.4, 0.12, 0); // on top of board
+    padMesh.rotation.x = -0.1;
+    padMesh.rotation.z = 0.05;
+    padMesh.scale.set(1, 1, 0.2);
+    surfboardGroup.add(padMesh);
+    // ---- add a subtle stringer (line down the middle) ----
+    const stringerMat = new THREE.MeshStandardMaterial({
+      color: 0xd4b8a0,
+      roughness: 0.6,
+      metalness: 0.1,
+    });
+    const stringerGeom = new THREE.BoxGeometry(0.02, 1.8, 0.01);
+    const stringer = new THREE.Mesh(stringerGeom, stringerMat);
+    stringer.position.set(0, 0, 0);
+    stringer.rotation.z = 0.02;
+    surfboardGroup.add(stringer);
+    // ---- add a fin (single fin) ----
+    const finShape = new THREE.Shape();
+    finShape.moveTo(0, 0);
+    finShape.lineTo(0.15, -0.25);
+    finShape.lineTo(-0.05, -0.3);
+    finShape.lineTo(-0.12, -0.15);
+    finShape.closePath();
+    const finGeom = new THREE.ShapeGeometry(finShape);
+    const finMat = new THREE.MeshStandardMaterial({
+      color: 0x3a4a5a,
+      roughness: 0.3,
+      metalness: 0.4,
+      side: THREE.DoubleSide,
+    });
+    const fin = new THREE.Mesh(finGeom, finMat);
+    fin.position.set(-0.75, -0.08, 0);
+    fin.rotation.x = 0.1;
+    fin.rotation.z = -0.05;
+    fin.scale.set(0.8, 0.8, 0.8);
+    surfboardGroup.add(fin);
+    // ---- add a second fin (smaller, side fin) ----
+    const fin2Shape = new THREE.Shape();
+    fin2Shape.moveTo(0, 0);
+    fin2Shape.lineTo(0.08, -0.18);
+    fin2Shape.lineTo(-0.03, -0.2);
+    fin2Shape.lineTo(-0.07, -0.1);
+    fin2Shape.closePath();
+    const fin2Geom = new THREE.ShapeGeometry(fin2Shape);
+    const fin2Mat = new THREE.MeshStandardMaterial({
+      color: 0x3a4a5a,
+      roughness: 0.3,
+      metalness: 0.4,
+      side: THREE.DoubleSide,
+    });
+    const fin2 = new THREE.Mesh(fin2Geom, fin2Mat);
+    fin2.position.set(-0.65, -0.06, 0.22);
+    fin2.rotation.x = -0.1;
+    fin2.rotation.z = -0.2;
+    fin2.scale.set(0.6, 0.6, 0.6);
+    surfboardGroup.add(fin2);
+    const fin3 = fin2.clone();
+    fin3.position.set(-0.65, -0.06, -0.22);
+    fin3.rotation.x = -0.1;
+    fin3.rotation.z = 0.2;
+    surfboardGroup.add(fin3);
+    // ---- add rail bands (decorative) ----
+    const railMat = new THREE.MeshStandardMaterial({
+      color: 0xccbbaa,
+      roughness: 0.5,
+      metalness: 0.1,
+    });
+    // top rail
+    const railGeom = new THREE.BoxGeometry(0.015, 1.6, 0.03);
+    const rail1 = new THREE.Mesh(railGeom, railMat);
+    rail1.position.set(0.28, 0.0, 0.01);
+    rail1.rotation.z = 0.02;
+    surfboardGroup.add(rail1);
+    const rail2 = rail1.clone();
+    rail2.position.set(0.28, 0.0, -0.01);
+    rail2.rotation.z = 0.02;
+    surfboardGroup.add(rail2);
+    // add a subtle gloss coating (a transparent layer) - not needed
+    // ---- add leash plug (small circle) ----
+    const plugMat = new THREE.MeshStandardMaterial({
+      color: 0x888888,
+      roughness: 0.2,
+      metalness: 0.7,
+    });
+    const plugGeom = new THREE.CylinderGeometry(0.04, 0.04, 0.02, 8);
+    const plug = new THREE.Mesh(plugGeom, plugMat);
+    plug.position.set(0.82, 0.03, 0);
+    plug.rotation.x = Math.PI / 2;
+    surfboardGroup.add(plug);
+    // ---- add a subtle nose guard ----
+    const noseMat = new THREE.MeshStandardMaterial({
+      color: 0xddccbb,
+      roughness: 0.4,
+      metalness: 0.2,
+    });
+    const noseGeom = new THREE.SphereGeometry(0.08, 8, 8);
+    const noseCap = new THREE.Mesh(noseGeom, noseMat);
+    noseCap.position.set(1.08, 0.0, 0);
+    noseCap.scale.set(0.6, 0.5, 0.3);
+    surfboardGroup.add(noseCap);
+    // --- final adjustments ---
+    // tilt the board slightly for a dynamic look
+    surfboardGroup.rotation.x = 0.05;
+    surfboardGroup.rotation.z = -0.1;
+    surfboardGroup.position.y = 0.1;
+    scene.add(surfboardGroup);
+    // --- add a subtle shadow catcher / ground plane (invisible but casts shadow) ---
+    const groundMat = new THREE.ShadowMaterial({
+      opacity: 0.3,
+    });
+    const groundGeom = new THREE.PlaneGeometry(6, 6);
+    const ground = new THREE.Mesh(groundGeom, groundMat);
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+    // --- some floating particles for ambiance (optional) ---
+    // just a few tiny sparkles
+    const sparkleMat = new THREE.PointsMaterial({
+      color: 0x88aaff,
+      size: 0.015,
+      transparent: true,
+      opacity: 0.3,
+    });
+    const sparklePos = [];
+    for (let i = 0; i < 40; i++) {
+      const x = (Math.random() - 0.5) * 6;
+      const y = (Math.random() - 0.5) * 3 + 0.5;
+      const z = (Math.random() - 0.5) * 6;
+      sparklePos.push(x, y, z);
+    }
+    const sparkleGeom = new THREE.BufferGeometry();
+    sparkleGeom.setAttribute('position', new THREE.Float32BufferAttribute(sparklePos, 3));
+    const sparkles = new THREE.Points(sparkleGeom, sparkleMat);
+    scene.add(sparkles);
+    // --- resize handler ---
+    window.addEventListener('resize', onWindowResize, false);
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    // --- render loop ---
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update(); // only for damping
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+
+</html>
